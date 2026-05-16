@@ -35,18 +35,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.linksaver.ui.theme.AppTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.io.File
 import java.util.Calendar
-import android.os.storage.StorageManager
-import android.os.Environment
-import java.io.File
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -63,7 +56,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(Environment.isExternalStorageManager()) }
-    val prefs = context.getSharedPreferences("linksaver_prefs", Context.MODE_PRIVATE)
+    
     var hasNotificationPermission by remember { 
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -83,6 +76,8 @@ fun MainScreen() {
             launcher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+
+    val prefs = context.getSharedPreferences("linksaver_prefs", Context.MODE_PRIVATE)
     var dbPath by remember { mutableStateOf(prefs.getString("db_path", null)) }
     var refreshTrigger by remember { mutableStateOf(0) }
 
@@ -164,7 +159,7 @@ fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<
 
     val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         uri?.let {
-            val path = getPathFromTreeUri(it)
+            val path = getPathFromTreeUri(context, it)
             prefs.edit().putString("script_folder_path", path).apply()
             scriptPath = path
         }
@@ -262,8 +257,6 @@ fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<
                             }
                         }
                     }
-                } else {
-                    Text("No Python scripts found in the selected folder.", modifier = Modifier.padding(top=8.dp))
                 }
             }
         }
@@ -274,7 +267,7 @@ fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<
 @Composable
 fun ScriptScheduleScreen(scriptName: String, availableScripts: List<String>, onBack: () -> Unit) {
     val context = LocalContext.current
-    var times by remember { mutableStateOf(mutableStateListOf<String>()) }
+    var times = remember { mutableStateListOf<String>() }
     var runAsServer by remember { mutableStateOf(false) }
     var triggerScript by remember { mutableStateOf("None") }
 
@@ -301,7 +294,6 @@ fun ScriptScheduleScreen(scriptName: String, availableScripts: List<String>, onB
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-            
             Text("Execution Times", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             times.forEachIndexed { index, time ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
@@ -311,7 +303,6 @@ fun ScriptScheduleScreen(scriptName: String, availableScripts: List<String>, onB
                     }
                 }
             }
-
             Button(onClick = {
                 val cal = Calendar.getInstance()
                 TimePickerDialog(context, { _, h, m ->
@@ -321,17 +312,12 @@ fun ScriptScheduleScreen(scriptName: String, availableScripts: List<String>, onB
             }, modifier = Modifier.padding(top = 8.dp)) {
                 Text("Add Time")
             }
-
             Spacer(modifier = Modifier.height(24.dp))
-
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Run as Persistent Server:", modifier = Modifier.weight(1f))
                 Switch(checked = runAsServer, onCheckedChange = { runAsServer = it })
             }
-            Text("Enable this if the script runs an infinite loop (like Flask).", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-
             Spacer(modifier = Modifier.height(24.dp))
-
             Text("Trigger Next Script (On Success)", fontWeight = FontWeight.Bold)
             var expandedTrigger by remember { mutableStateOf(false) }
             Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -349,9 +335,7 @@ fun ScriptScheduleScreen(scriptName: String, availableScripts: List<String>, onB
                     }
                 }
             }
-
             Spacer(modifier = Modifier.height(32.dp))
-
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
@@ -375,11 +359,9 @@ fun LibraryScreen() {
     var searchQuery by remember { mutableStateOf("") }
     var links by remember { mutableStateOf(listOf<LinkItem>()) }
     var editingLink by remember { mutableStateOf<LinkItem?>(null) }
-
     LaunchedEffect(searchQuery, editingLink) {
         links = DatabaseManager.searchLinks(searchQuery)
     }
-
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = searchQuery,
@@ -387,7 +369,6 @@ fun LibraryScreen() {
             label = { Text("Search URLs or Tags") },
             modifier = Modifier.fillMaxWidth().padding(16.dp)
         )
-
         LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             items(links, key = { "${it.isYoutube}_${it.id}" }) { link ->
                 val dismissState = rememberSwipeToDismissBoxState(
@@ -398,7 +379,6 @@ fun LibraryScreen() {
                         } else false
                     }
                 )
-
                 SwipeToDismissBox(
                     state = dismissState,
                     backgroundContent = {
@@ -421,13 +401,11 @@ fun LibraryScreen() {
             }
         }
     }
-
     if (editingLink != null) {
         var details by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
         LaunchedEffect(editingLink) {
             details = DatabaseManager.getFullLinkDetails(editingLink!!.id, editingLink!!.isYoutube)
         }
-
         AlertDialog(
             onDismissRequest = { editingLink = null },
             title = { Text("Link Details") },
@@ -452,12 +430,10 @@ fun LogsScreen() {
     var logs by remember { mutableStateOf(listOf<AppLog>()) }
     var stats by remember { mutableStateOf(Pair(0, 0)) }
     var refreshTrigger by remember { mutableStateOf(0) }
-
     LaunchedEffect(selectedTab, refreshTrigger) {
         stats = DatabaseManager.getLogStats()
         logs = DatabaseManager.getLogs(if (selectedTab == 0) "SUCCESS" else "FAILURE")
     }
-
     Column(modifier = Modifier.fillMaxSize()) {
         Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -495,7 +471,6 @@ fun TerminalScreen() {
     val sessionLogs = OutputLogger.sessionLogs
     val keys = sessionLogs.keys.toList()
     var selectedTabIndex by remember { mutableStateOf(0) }
-
     Column(modifier = Modifier.fillMaxSize()) {
         if (keys.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -504,11 +479,7 @@ fun TerminalScreen() {
         } else {
             ScrollableTabRow(selectedTabIndex = selectedTabIndex.coerceIn(0, maxOf(0, keys.size - 1))) {
                 keys.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTabIndex == index,
-                        onClick = { selectedTabIndex = index },
-                        text = { Text(title) }
-                    )
+                    Tab(selected = selectedTabIndex == index, onClick = { selectedTabIndex = index }, text = { Text(title) })
                 }
             }
             val selectedKey = keys.getOrNull(selectedTabIndex)
@@ -526,8 +497,9 @@ fun TerminalScreen() {
 
 @Composable
 fun SetupScreen(onPathSelected: (String) -> Unit) {
+    val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        uri?.let { onPathSelected(getPathFromTreeUri(it)) }
+        uri?.let { onPathSelected(getPathFromTreeUri(context, it)) }
     }
     Column(modifier = Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Initial Setup", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -547,16 +519,18 @@ fun PermissionScreen(onPermissionGranted: () -> Unit) {
     }
 }
 
-
 fun getPathFromTreeUri(context: Context, uri: Uri): String {
     val path = uri.path ?: return ""
     val match = Regex("/tree/([^:]+):(.*)").find(path)
     if (match == null) return Environment.getExternalStorageDirectory().absolutePath
+
     val volumeId = match.groupValues[1]
     val relativePath = match.groupValues[2]
+
     if (volumeId.equals("primary", true)) {
         return "${Environment.getExternalStorageDirectory().absolutePath}/$relativePath"
     }
+
     val externalDirs = context.getExternalFilesDirs(null)
     for (dir in externalDirs) {
         if (dir != null && !dir.absolutePath.contains("emulated/0")) {
@@ -566,7 +540,5 @@ fun getPathFromTreeUri(context: Context, uri: Uri): String {
             }
         }
     }
-
-    // Ultimate Fallback: The standard Linux mount point
     return "/storage/43BC-100D/$relativePath"
 }
