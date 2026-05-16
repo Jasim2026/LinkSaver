@@ -17,3 +17,6 @@
 -keepclassmembers class * extends android.database.sqlite.SQLiteOpenHelper {
     <init>(...);
 }
+
+# JSch Tunnel Requirements
+-keep class com.jcraft.jsch.** { *; }

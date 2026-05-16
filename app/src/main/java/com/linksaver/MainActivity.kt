@@ -20,10 +20,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,9 +58,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen() {
     val context = LocalContext.current
-    var hasPermission by remember { mutableStateOf(Environment.isExternalStorageManager()) }
+    var storageGranted by remember { mutableStateOf(Environment.isExternalStorageManager()) }
     
-    var hasNotificationPermission by remember { 
+    var notifGranted by remember { 
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 androidx.core.content.ContextCompat.checkSelfPermission(
@@ -67,30 +70,23 @@ fun MainScreen() {
         )
     }
 
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted -> hasNotificationPermission = isGranted }
-
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
-            launcher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
     val prefs = context.getSharedPreferences("linksaver_prefs", Context.MODE_PRIVATE)
     var dbPath by remember { mutableStateOf(prefs.getString("db_path", null)) }
     var refreshTrigger by remember { mutableStateOf(0) }
 
-    LaunchedEffect(hasPermission, dbPath) {
-        if (hasPermission && dbPath != null) {
+    LaunchedEffect(storageGranted, dbPath) {
+        if (storageGranted && dbPath != null) {
             if (DatabaseManager.initDb(dbPath!!)) {
                 refreshTrigger++
             }
         }
     }
 
-    if (!hasPermission) {
-        PermissionScreen { hasPermission = Environment.isExternalStorageManager() }
+    // Permission execution flow order
+    if (!notifGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        NotificationPermissionScreen { notifGranted = true }
+    } else if (!storageGranted) {
+        PermissionScreen { storageGranted = Environment.isExternalStorageManager() }
     } else if (dbPath == null) {
         SetupScreen { path -> prefs.edit().putString("db_path", path).apply(); dbPath = path }
     } else {
@@ -102,6 +98,7 @@ fun MainScreen() {
 fun AppNavigation(dbPath: String, refreshTrigger: Int) {
     var selectedTab by remember { mutableStateOf(0) }
     var scheduledScript by remember { mutableStateOf<String?>(null) }
+    var serverStatusScript by remember { mutableStateOf<String?>(null) }
     
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("linksaver_prefs", Context.MODE_PRIVATE)
@@ -119,6 +116,11 @@ fun AppNavigation(dbPath: String, refreshTrigger: Int) {
             availableScripts = availableScripts,
             onBack = { scheduledScript = null }
         )
+    } else if (serverStatusScript != null) {
+        ServerStatusScreen(
+            scriptName = serverStatusScript!!,
+            onBack = { serverStatusScript = null }
+        )
     } else {
         Scaffold(
             bottomBar = {
@@ -132,7 +134,11 @@ fun AppNavigation(dbPath: String, refreshTrigger: Int) {
         ) { padding ->
             Box(modifier = Modifier.padding(padding).fillMaxSize()) {
                 when (selectedTab) {
-                    0 -> DashboardScreen(dbPath, refreshTrigger, availableScripts) { scheduledScript = it }
+                    0 -> DashboardScreen(
+                        dbPath, refreshTrigger, availableScripts, 
+                        onScheduleClick = { scheduledScript = it },
+                        onServerStatusClick = { serverStatusScript = it }
+                    )
                     1 -> LibraryScreen()
                     2 -> LogsScreen()
                     3 -> TerminalScreen()
@@ -143,7 +149,7 @@ fun AppNavigation(dbPath: String, refreshTrigger: Int) {
 }
 
 @Composable
-fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<String>, onScheduleClick: (String) -> Unit) {
+fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<String>, onScheduleClick: (String) -> Unit, onServerStatusClick: (String) -> Unit) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("linksaver_prefs", Context.MODE_PRIVATE)
     
@@ -246,6 +252,7 @@ fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<
                                                     context.startService(sIntent)
                                                 }
                                                 Toast.makeText(context, "Server Started", Toast.LENGTH_SHORT).show()
+                                                onServerStatusClick(scriptName)
                                             })
                                             DropdownMenuItem(text = { Text("Schedule Server") }, onClick = {
                                                 serverExpanded = false
@@ -258,6 +265,99 @@ fun DashboardScreen(dbPath: String, refreshTrigger: Int, availableScripts: List<
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ServerStatusScreen(scriptName: String, onBack: () -> Unit) {
+    val context = LocalContext.current
+    var tunnelerExpanded by remember { mutableStateOf(false) }
+    val tunnelerOptions = listOf("serveo.net", "localhost.run")
+    var selectedTunneler by remember { mutableStateOf(tunnelerOptions[0]) }
+    
+    var localPort by remember { mutableStateOf("5000") }
+    var advancedExpanded by remember { mutableStateOf(false) }
+    var domain by remember { mutableStateOf("") }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Server: $scriptName") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
+                }
+            )
+        }
+    ) { padding ->
+        Column(modifier = Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+            Text("SSH Tunnel Configuration", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Box {
+                OutlinedTextField(
+                    value = selectedTunneler,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Provider Server") },
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        IconButton(onClick = { tunnelerExpanded = true }) {
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                    }
+                )
+                DropdownMenu(expanded = tunnelerExpanded, onDismissRequest = { tunnelerExpanded = false }) {
+                    tunnelerOptions.forEach { option ->
+                        DropdownMenuItem(text = { Text(option) }, onClick = { selectedTunneler = option; tunnelerExpanded = false })
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            OutlinedTextField(
+                value = localPort,
+                onValueChange = { localPort = it },
+                label = { Text("Local Port (Default 5000)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Card(modifier = Modifier.fillMaxWidth().clickable { advancedExpanded = !advancedExpanded }) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Advanced Options", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    Icon(if (advancedExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.ArrowDropDown, contentDescription = null)
+                }
+            }
+            
+            if (advancedExpanded) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    OutlinedTextField(
+                        value = domain,
+                        onValueChange = { domain = it },
+                        label = { Text("Custom Subdomain (Serveo only)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Button(
+                onClick = {
+                    val port = localPort.toIntOrNull() ?: 5000
+                    TunnelerManager.startTunnel(context, scriptName, port, domain, selectedTunneler)
+                    Toast.makeText(context, "Requesting tunnel... Check Terminal tab!", Toast.LENGTH_LONG).show()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Start Tunnel")
             }
         }
     }
@@ -485,12 +585,43 @@ fun TerminalScreen() {
             val selectedKey = keys.getOrNull(selectedTabIndex)
             if (selectedKey != null) {
                 val logs = sessionLogs[selectedKey] ?: emptyList()
-                LazyColumn(modifier = Modifier.fillMaxSize().background(Color.Black).padding(8.dp)) {
+                LazyColumn(modifier = Modifier.fillMaxSize().background(Color(0xFF181818)).padding(8.dp)) {
                     items(logs) { log ->
-                        Text(log, color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        val color = when {
+                            log.contains("[SUCCESS]") || log.contains("http://") || log.contains("https://") -> Color(0xFF55FF55) // Bright Green
+                            log.contains("[ERROR]") || log.contains("Exception") || log.contains("Error") -> Color(0xFFFF5555) // Red
+                            log.contains("[INFO]") || log.contains("Starting") -> Color(0xFFFFFF55) // Yellow
+                            else -> Color(0xFFCCCCCC) // Light Gray
+                        }
+                        SelectionContainer {
+                            Text(log, color = color, fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.padding(vertical = 2.dp))
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun NotificationPermissionScreen(onGranted: () -> Unit) {
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted -> 
+        if(isGranted) onGranted() 
+    }
+    Column(modifier = Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Notification Access", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("We need notifications to reliably run your automated Python scripts in the background and show server statuses.", modifier = Modifier.padding(top=16.dp))
+        Button(
+            onClick = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    launcher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    onGranted()
+                }
+            }, 
+            modifier = Modifier.padding(top=32.dp)
+        ) { 
+            Text("Grant Permission") 
         }
     }
 }

@@ -11,8 +11,11 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.core.app.NotificationCompat
 import com.chaquo.python.Python
+import com.jcraft.jsch.JSch
 import org.json.JSONArray
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStreamReader
 import java.util.*
 
 object OutputLogger {
@@ -207,5 +210,56 @@ sys.stderr = AndroidWriter(android_logger)
             .setContentText(message)
             .setAutoCancel(true)
         manager.notify(System.currentTimeMillis().toInt(), builder.build())
+    }
+}
+
+object TunnelerManager {
+    fun startTunnel(context: Context, scriptName: String, port: Int, customSubdomain: String, hostInfo: String) {
+        Thread {
+            try {
+                OutputLogger.log(scriptName, "[INFO] Preparing SSH Tunnel to $hostInfo...")
+                val jsch = JSch()
+                
+                // Define Username logic (serveo optionally maps username to subdomain request)
+                val user = if (hostInfo == "serveo.net") {
+                    if (customSubdomain.isNotBlank()) customSubdomain else "serveo"
+                } else {
+                    "nokey" // Used by localhost.run
+                }
+
+                val session = jsch.getSession(user, hostInfo, 22)
+                session.setConfig("StrictHostKeyChecking", "no")
+                session.setConfig("PreferredAuthentications", "publickey,keyboard-interactive,password")
+
+                OutputLogger.log(scriptName, "[INFO] Negotiating connection with $hostInfo...")
+                session.connect(30000)
+
+                // The Magic - Remote Port Forwarding (Remote:80 -> Localhost:LocalPort)
+                session.setPortForwardingR(80, "127.0.0.1", port)
+                OutputLogger.log(scriptName, "[SUCCESS] SSH Tunnel Authenticated & Forwarded!")
+
+                // Read shell stream to dynamically fetch the assigned URLs
+                val channel = session.openChannel("shell")
+                val input = BufferedReader(InputStreamReader(channel.inputStream))
+                channel.connect()
+
+                var line: String?
+                while (input.readLine().also { line = it } != null) {
+                    val text = line!!.trim()
+                    if (text.isNotBlank()) {
+                        if (text.contains("http://") || text.contains("https://")) {
+                            OutputLogger.log(scriptName, "[SUCCESS] URL ALLOCATED: $text")
+                            OutputLogger.log(scriptName, "========================================")
+                        } else {
+                            OutputLogger.log(scriptName, "[TUNNEL] $text")
+                        }
+                    }
+                }
+                OutputLogger.log(scriptName, "[INFO] Tunnel connection closed by remote host.")
+            } catch (e: Exception) {
+                OutputLogger.log(scriptName, "[ERROR] Tunnel failed:")
+                OutputLogger.log(scriptName, e.stackTraceToString())
+            }
+        }.start()
     }
 }
