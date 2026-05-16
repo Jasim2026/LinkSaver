@@ -96,8 +96,13 @@ class AndroidWriter:
     def __init__(self, logger):
         self.logger = logger
     def write(self, msg):
-        if msg.strip():
-            self.logger.log(msg.strip())
+        if not msg:
+            return
+        if isinstance(msg, bytes):
+            msg = msg.decode('utf-8', errors='replace')
+        text = msg.strip()
+        if text:
+            self.logger.log(text)
     def flush(self):
         pass
 
